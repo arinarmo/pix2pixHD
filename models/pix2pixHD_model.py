@@ -11,9 +11,9 @@ class Pix2PixHDModel(BaseModel):
         return 'Pix2PixHDModel'
     
     def init_loss_filter(self, use_gan_feat_loss, use_vgg_loss):
-        flags = (True, use_gan_feat_loss, use_vgg_loss, True, True)
-        def loss_filter(g_gan, g_gan_feat, g_vgg, d_real, d_fake):
-            return [l for (l,f) in zip((g_gan,g_gan_feat,g_vgg,d_real,d_fake),flags) if f]
+        flags = (True, use_gan_feat_loss, use_vgg_loss, True, True, True)
+        def loss_filter(g_gan, g_gan_feat, g_vgg, d_real, d_fake, g_orig_sim):
+            return [l for (l,f) in zip((g_gan,g_gan_feat,g_vgg,d_real,d_fake,g_orig_sim),flags) if f]
         return loss_filter
     
     def initialize(self, opt):
@@ -78,7 +78,7 @@ class Pix2PixHDModel(BaseModel):
                 
         
             # Names so we can breakout loss
-            self.loss_names = self.loss_filter('G_GAN','G_GAN_Feat','G_VGG','D_real', 'D_fake')
+            self.loss_names = self.loss_filter('G_GAN','G_GAN_Feat','G_VGG','D_real', 'D_fake', 'G_orig_sim')
 
             # initialize optimizers
             # optimizer G
@@ -188,9 +188,11 @@ class Pix2PixHDModel(BaseModel):
         loss_G_VGG = 0
         if not self.opt.no_vgg_loss:
             loss_G_VGG = self.criterionVGG(fake_image, real_image) * self.opt.lambda_feat
+
+        loss_orig_sim = 20*((real_image - fake_image)**2).mean()
         
         # Only return the fake_B image if necessary to save BW
-        return [ self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake ), None if not infer else fake_image ]
+        return [ self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake, loss_orig_sim), None if not infer else fake_image ]
 
     def inference(self, label, inst, image=None):
         # Encode Inputs        
