@@ -57,6 +57,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
     epoch_start_time = time.time()
     if epoch != start_epoch:
         epoch_iter = epoch_iter % dataset_size
+    st = epoch_iter
     for i, data in enumerate(dataset, start=epoch_iter):
         if total_steps % opt.print_freq == print_delta:
             iter_start_time = time.time()
@@ -78,7 +79,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
         loss_D = (loss_dict['D_fake'] + loss_dict['D_real']) * 0.5
         loss_G = loss_dict['G_GAN'] + loss_dict.get('G_GAN_Feat',0) + loss_dict.get('G_VGG',0) + loss_dict.get('G_orig_sim', 0)
 
-        ############### Backward Pass ####################
+        ############### Backward Pass ###ach().#################
         # update generator weights
         optimizer_G.zero_grad()
         if opt.fp16:                                
@@ -134,6 +135,7 @@ for epoch in range(start_epoch, opt.niter + opt.niter_decay + 1):
 
     ### instead of only training the local enhancer, train the entire network after certain iterations
     if (opt.niter_fix_global != 0) and (epoch == opt.niter_fix_global):
+        print("updating fixed params")
         model.module.update_fixed_params()
 
     ### linearly decay learning rate after certain iterations

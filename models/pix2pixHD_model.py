@@ -6,6 +6,12 @@ from util.image_pool import ImagePool
 from .base_model import BaseModel
 from . import networks
 
+MASK_LABELS = torch.Tensor([1, 4, 6, 9, 15, 43, 50, 54, 60, 64, 83, 135, 140]).to(torch.cuda.current_device())
+
+def isin_mask(a, b):
+    return (a[..., None] == b).any(-1)
+
+
 class Pix2PixHDModel(BaseModel):
     def name(self):
         return 'Pix2PixHDModel'
@@ -153,13 +159,18 @@ class Pix2PixHDModel(BaseModel):
         # Encode Inputs
         input_label, inst_map, real_image, feat_map = self.encode_input(label, inst, image, feat)  
 
+        # Mask for empty labels
+        empty_mask = isin_mask(label, MASK_LABELS)
+        empty_image = real_image*empty_mask
+
         # Fake Generation
         if self.use_features:
             if not self.opt.load_features:
                 feat_map = self.netE.forward(real_image, inst_map)                     
-            input_concat = torch.cat((input_label, feat_map), dim=1)                        
+            input_concat = torch.cat((input_label, feat_map), dim=1)
         else:
-            input_concat = input_label
+            input_concat = torch.cat((input_label, empty_image), dim=1)
+
         fake_image = self.netG.forward(input_concat)
 
         # Fake Detection and Loss
@@ -189,7 +200,11 @@ class Pix2PixHDModel(BaseModel):
         if not self.opt.no_vgg_loss:
             loss_G_VGG = self.criterionVGG(fake_image, real_image) * self.opt.lambda_feat
 
-        loss_orig_sim = 20*((real_image - fake_image)**2).mean()
+        # Loss w.r.t. original image
+        tot_mask = empty_mask.sum()
+        loss_orig_sim = 0
+        if tot_mask > 0:
+            loss_orig_sim = 10*(((empty_image - fake_image)**2)*empty_mask).sum()/tot_mask
         
         # Only return the fake_B image if necessary to save BW
         return [ self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake, loss_orig_sim), None if not infer else fake_image ]
