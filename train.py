@@ -69,12 +69,9 @@ if __name__ == "__main__":
             save_fake = total_steps % opt.display_freq == display_delta
 
             ############## Forward Pass ######################
-            print(data)
             label = Variable(data["label"])
-            inst = Variable(data["inst"])
             img = Variable(data["image"])
-            feat = Variable(data["feat"])
-            losses, generated = model(label, inst, img, feat, infer=save_fake)
+            losses, generated = model(label, None, img, None, infer=save_fake)
 
             # sum per device losses
             losses = [ torch.mean(x) if not isinstance(x, int) else x for x in losses ]
