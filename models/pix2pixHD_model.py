@@ -160,7 +160,7 @@ class Pix2PixHDModel(BaseModel):
         input_label, inst_map, real_image, feat_map = self.encode_input(label, inst, image, feat)  
 
         # Mask for empty labels
-        empty_mask = isin_mask(label, MASK_LABELS)
+        empty_mask = isin_mask(label, MASK_LABELS).float()
         empty_image = real_image*empty_mask
 
         # Fake Generation
@@ -204,15 +204,19 @@ class Pix2PixHDModel(BaseModel):
         tot_mask = empty_mask.sum()
         loss_orig_sim = 0
         if tot_mask > 0:
-            loss_orig_sim = 10*(((empty_image - fake_image)**2)*empty_mask).sum()/tot_mask
+            loss_orig_sim = (((empty_image - fake_image)**2)*empty_mask).sum()/tot_mask
         
         # Only return the fake_B image if necessary to save BW
-        return [ self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake, loss_orig_sim), None if not infer else fake_image ]
+        return [self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake, loss_orig_sim), None if not infer else fake_image]
 
     def inference(self, label, inst, image=None):
         # Encode Inputs        
         image = Variable(image) if image is not None else None
         input_label, inst_map, real_image, _ = self.encode_input(Variable(label), Variable(inst), image, infer=True)
+
+        # Mask for empty labels
+        empty_mask = isin_mask(label, MASK_LABELS.cpu()).float().to(torch.cuda.current_device())
+        empty_image = real_image*empty_mask
 
         # Fake Generation
         if self.use_features:
@@ -224,7 +228,7 @@ class Pix2PixHDModel(BaseModel):
                 feat_map = self.sample_features(inst_map)
             input_concat = torch.cat((input_label, feat_map), dim=1)                        
         else:
-            input_concat = input_label        
+            input_concat = torch.cat((input_label, empty_image), dim=1)     
            
         if torch.__version__.startswith('0.4'):
             with torch.no_grad():
