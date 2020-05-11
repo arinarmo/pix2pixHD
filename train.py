@@ -2,19 +2,70 @@ import time
 import os
 import numpy as np
 import torch
+from io import BytesIO
 from torch.autograd import Variable
+from torchvision import transforms
 from collections import OrderedDict
 from subprocess import call
 import fractions
 def lcm(a,b): return abs(a * b)/fractions.gcd(a,b) if a and b else 0
 
 from options.train_options import TrainOptions
+from options.test_options import TestOptions
 from data.data_loader import CreateDataLoader
 from models.models import create_model
 import util.util as util
-from util.visualizer import Visualizer
+from util import html
+
+from PIL import Image
+
+
+def model_fn(model_dir):
+    save_path = os.path.join(model_dir, "final_net_G.pth")
+    from models.pix2pixHD_model import InferenceModel
+    model = InferenceModel()
+    model.pred_initialize(save_path)
+    return model.netG
+
+
+def predict_fn(input_object, model):
+    input_object = input_object.float().to("cpu")
+    return model(input_object)
+
+
+def input_fn(request_body, request_content_type):
+    if request_content_type == "application/x-image":
+        stream = BytesIO(request_body)
+        img = Image.open(stream)
+        tensor = transforms.ToTensor()(img).unsqueeze(0)
+    elif request_content_type == "application/x-npy":
+        stream = BytesIO(request_body)
+        with stream:
+            tensor = torch.Tensor(np.load(stream)).unsqueeze(0)
+    else:
+        raise ValueError("Unsupported content type")
+        
+    return tensor
+
+
+def output_fn(prediction, content_type):
+    if content_type == "application/x-image":
+        img = transforms.ToPILImage()((prediction[0] + 1)/2)
+        n = BytesIO()
+        img.save(n, format="png")
+        n.seek(0)
+        response = n.read()
+    elif content_type == "application/x-npy":
+        with BytesIO() as stream:
+            np.save(stream, prediction.detach().numpy())
+            response = stream.getvalue()
+    else:
+        raise ValueError("Unsupported content type")
+    return response
+
 
 if __name__ == "__main__":
+    from util.visualizer import Visualizer
     opt = TrainOptions().parse()
     iter_path = os.path.join(opt.checkpoints_dir, opt.name, 'iter.txt')
     if opt.continue_train:
@@ -34,6 +85,8 @@ if __name__ == "__main__":
         opt.niter_decay = 0
         opt.max_dataset_size = 10
 
+    print("Train directory:")
+    print(os.environ.get("SM_OUTPUT_DATA_DIR"))
     data_loader = CreateDataLoader(opt)
     dataset = data_loader.load_data()
     dataset_size = len(data_loader)
@@ -58,7 +111,6 @@ if __name__ == "__main__":
         epoch_start_time = time.time()
         if epoch != start_epoch:
             epoch_iter = epoch_iter % dataset_size
-        st = epoch_iter
         for i, data in enumerate(dataset, start=epoch_iter):
             if total_steps % opt.print_freq == print_delta:
                 iter_start_time = time.time()
@@ -69,9 +121,8 @@ if __name__ == "__main__":
             save_fake = total_steps % opt.display_freq == display_delta
 
             ############## Forward Pass ######################
-            label = Variable(data["label"])
-            img = Variable(data["image"])
-            losses, generated = model(label, None, img, None, infer=save_fake)
+            losses, generated = model(Variable(data['label']), Variable(data['inst']), 
+                Variable(data['image']), Variable(data['feat']), infer=save_fake)
 
             # sum per device losses
             losses = [ torch.mean(x) if not isinstance(x, int) else x for x in losses ]
@@ -79,9 +130,9 @@ if __name__ == "__main__":
 
             # calculate final loss scalar
             loss_D = (loss_dict['D_fake'] + loss_dict['D_real']) * 0.5
-            loss_G = loss_dict['G_GAN'] + loss_dict.get('G_GAN_Feat',0) + loss_dict.get('G_VGG',0) + loss_dict.get('G_orig_sim', 0)
+            loss_G = loss_dict['G_GAN'] + loss_dict.get('G_GAN_Feat',0) + loss_dict.get('G_VGG',0)
 
-            ############### Backward Pass ###ach().#################
+            ############### Backward Pass ####################
             # update generator weights
             optimizer_G.zero_grad()
             if opt.fp16:                                
@@ -137,9 +188,36 @@ if __name__ == "__main__":
 
         ### instead of only training the local enhancer, train the entire network after certain iterations
         if (opt.niter_fix_global != 0) and (epoch == opt.niter_fix_global):
-            print("updating fixed params")
             model.module.update_fixed_params()
 
         ### linearly decay learning rate after certain iterations
         if epoch > opt.niter:
             model.module.update_learning_rate()
+            
+    opt.isTrain = True
+    opt.phase = "test"
+    opt.use_encoded_image = True
+    data_loader = CreateDataLoader(opt)
+    dataset = data_loader.load_data()
+    dataset_size = len(data_loader)
+    visualizer = Visualizer(opt)
+    # create website
+    web_dir = os.path.join(opt.checkpoints_dir, opt.name)
+    webpage = html.HTML(web_dir, 'Experiment = %s, Phase = %s, Epoch = %s' % (opt.name, opt.phase, opt.which_epoch))
+    print('#test images = %d' % dataset_size)
+    for i, data in enumerate(dataset):
+        if total_steps % opt.print_freq == print_delta:
+            iter_start_time = time.time()
+        total_steps += opt.batchSize
+        ############## Forward Pass ######################
+        generated = model.module.inference(Variable(data['label']), Variable(data['inst']), image=Variable(data["image"]))
+        visuals = OrderedDict([('input_label', util.tensor2label(data['label'][0], opt.label_nc)),
+                           ('synthesized_image', util.tensor2im(generated.data[0]))])
+        img_path = data['path']
+        print('process image... %s' % img_path)
+        visualizer.save_images(webpage, visuals, img_path)
+            
+    final_save_dir = os.environ.get("SM_MODEL_DIR", model.module.save_dir)
+    model.module.save_dir = final_save_dir
+    print("Saving final model to: {}".format(final_save_dir))
+    model.module.save("final")
