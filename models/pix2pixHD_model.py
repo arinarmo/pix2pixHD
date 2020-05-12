@@ -33,7 +33,7 @@ class Pix2PixHDModel(BaseModel):
 
         ##### define networks        
         # Generator network
-        netG_input_nc = input_nc        
+        netG_input_nc = input_nc + 1   
         if not opt.no_instance:
             netG_input_nc += 1
         if self.use_features:
@@ -169,9 +169,10 @@ class Pix2PixHDModel(BaseModel):
                 feat_map = self.netE.forward(real_image, inst_map)                     
             input_concat = torch.cat((input_label, feat_map), dim=1)
         else:
-            input_concat = torch.cat((input_label, empty_image), dim=1)
+            input_concat = torch.cat((input_label, empty_image, empty_mask), dim=1)
 
         fake_image = self.netG.forward(input_concat)
+        fake_image = fake_image*(1-empty_mask) + empty_image
 
         # Fake Detection and Loss
         pred_fake_pool = self.discriminate(input_label, fake_image, use_pool=True)
@@ -203,8 +204,9 @@ class Pix2PixHDModel(BaseModel):
         # Loss w.r.t. original image
         tot_mask = empty_mask.sum()
         loss_orig_sim = 0
-        if tot_mask > 0:
-            loss_orig_sim = (((empty_image - fake_image)**2)*empty_mask).sum()/tot_mask
+        # Experiment without original sim loss
+        #if tot_mask > 0:
+            #loss_orig_sim = (((empty_image - fake_image)**2)*empty_mask).sum()/tot_mask
         
         # Only return the fake_B image if necessary to save BW
         return [self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake, loss_orig_sim), None if not infer else fake_image]
