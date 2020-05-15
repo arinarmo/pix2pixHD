@@ -204,7 +204,8 @@ class Pix2PixHDModel(BaseModel):
         tot_mask = empty_mask.sum()
         loss_orig_sim = 0
         if tot_mask > 0:
-            loss_orig_sim = (((empty_image - fake_image)**2)*empty_mask).sum()/tot_mask
+            orig_sqdiff = torch.clamp((empty_image - fake_image)**2, 0, 1)
+            loss_orig_sim = orig_sqdiff.sum()/tot_mask
         
         # Only return the fake_B image if necessary to save BW
         return [self.loss_filter( loss_G_GAN, loss_G_GAN_Feat, loss_G_VGG, loss_D_real, loss_D_fake, loss_orig_sim), None if not infer else fake_image]
