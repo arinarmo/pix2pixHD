@@ -39,3 +39,4 @@ test/data/legacy_serialized.pt
 *.DS_Store
 *~
 data/labels2scene/
+**/.ipynb_checkpoints/
